@@ -15,6 +15,19 @@
 #include "queue.h"
 #include "semphr.h"
 
+SemaphoreHandle_t xSemaphore;
+
+void ButtonInterrupt()
+{
+    if (GPIOIntStatus(GPIO_PORTF_BASE, false) & GPIO_PIN_4) {
+            // PF4 was interrupt cause
+            GPIOIntClear(GPIO_PORTF_BASE, GPIO_PIN_4);  // Clear interrupt flag
+            xSemaphoreGiveFromISR(xSemaphore,0);
+
+    }
+
+}
+
 void initLedGPIO()
 {
     // Enable the GPIO port that is used for the on-board LED.
@@ -33,6 +46,22 @@ void initLedGPIO()
     // enable the GPIO pin for digital function.
     //
     GPIOPinTypeGPIOOutput(GPIO_PORTF_BASE, GPIO_PIN_3);
+    GPIOPinTypeGPIOOutput(GPIO_PORTF_BASE, GPIO_PIN_2);
+
+
+}
+
+void initButtonGPIO(){
+    GPIOPinTypeGPIOInput(GPIO_PORTF_BASE, GPIO_PIN_4);
+    GPIOPadConfigSet(GPIO_PORTF_BASE, GPIO_PIN_4,
+            GPIO_STRENGTH_2MA, GPIO_PIN_TYPE_STD_WPU);
+    GPIOIntDisable(GPIO_PORTF_BASE, GPIO_PIN_4);        // Disable interrupt for PF4 (in case it was enabled)
+    GPIOIntClear(GPIO_PORTF_BASE, GPIO_PIN_4);      // Clear pending interrupts for PF4
+    GPIOIntRegister(GPIO_PORTF_BASE, ButtonInterrupt);     // Register our handler function for port F
+    GPIOIntTypeSet(GPIO_PORTF_BASE, GPIO_PIN_4,
+        GPIO_FALLING_EDGE);             // Configure PF4 for falling edge trigger
+    GPIOIntEnable(GPIO_PORTF_BASE, GPIO_PIN_4);     // Enable interrupt for PF4
+
 }
 
 void vLedTask( void *pvParameters )
@@ -41,6 +70,7 @@ void vLedTask( void *pvParameters )
     for( ;; )
     {
         GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_3, val);
+    //    GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_2, val);
         vTaskDelay(500 / portTICK_PERIOD_MS);
         if(val==0x0)
             val=GPIO_PIN_3;
@@ -48,13 +78,33 @@ void vLedTask( void *pvParameters )
             val=0x0;
     }
 
-        /* Tasks must not attempt to return from their implementing
-        function or otherwise exit.  In newer FreeRTOS port
-        attempting to do so will result in an configASSERT() being
-        called if it is defined.  If it is necessary for a task to
-        exit then have the task call vTaskDelete( NULL ) to ensure
-        its exit is clean. */
     vTaskDelete( NULL );
+}
+
+void vRedLedTask(void *pvParameters)
+{
+    uint8_t val = 0x0;
+    for(;;)
+    {
+        if( xSemaphore != NULL )
+            {
+                // Obtain the semaphore - don't block if the semaphore is not
+                // immediately available.
+                if( xSemaphoreTake( xSemaphore, ( TickType_t ) 999999 ) )
+                {
+                    GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_2, val);
+
+                                if(val==0x0)
+                                    val=GPIO_PIN_2;
+                                else
+                                    val=0x0;
+                 }
+
+
+            }
+
+    }
+
 }
 
 /**
@@ -70,10 +120,18 @@ int main(void)
                        SYSCTL_OSC_MAIN);
 
     initLedGPIO();
+    initButtonGPIO();
+    vSemaphoreCreateBinary(xSemaphore);
+    xSemaphoreTake(xSemaphore, 0);
 
     clk = SysCtlClockGet();
 
     if(xTaskCreate(vLedTask, (const portCHAR *)"LED", 256, NULL, 1, NULL) != pdTRUE)
+    {
+        return(1);
+    }
+
+    if(xTaskCreate(vRedLedTask, (const portCHAR *)"RED", 256, NULL, 2, NULL) != pdTRUE)
     {
         return(1);
     }
